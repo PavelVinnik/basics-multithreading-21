@@ -27,7 +27,6 @@ public class MainActivity extends AppCompatActivity {
 
     private List<WithMillis<Message>> mList = new ArrayList<>();
 
-    private Queue<WithMillis<Message>> mCipherQueue = new LinkedList<>();
     private Queue<Long> mAddTimeQueue = new LinkedList<>();
 
     private MessageAdapter mAdapter = new MessageAdapter(mList);
@@ -35,6 +34,7 @@ public class MainActivity extends AppCompatActivity {
     private Handler mHandler;
 
     private boolean canEncrypt = true;
+    private int mQueueEndPointer = 0;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -88,7 +88,6 @@ public class MainActivity extends AppCompatActivity {
     public void insert(final WithMillis<Message> message) {
         mList.add(message);
         mAddTimeQueue.add(System.currentTimeMillis());
-        mCipherQueue.add(message);
         mAdapter.notifyItemInserted(mList.size() - 1);
 
         // TODO: Start processing the message (please use CipherUtil#encrypt(...)) here.
@@ -97,13 +96,14 @@ public class MainActivity extends AppCompatActivity {
             mHandler.sendEmptyMessage(CIPHER_QUEUE_START_MESSAGE);
             new Thread(new Runnable() {
                 public void run() {
-                    while (!mCipherQueue.isEmpty()) {
-                        WithMillis<Message> message = mCipherQueue.poll();
+                    while (mQueueEndPointer < mList.size()) {
+                        WithMillis<Message> message = mList.get(mQueueEndPointer);
                         Long startTime = mAddTimeQueue.poll();
                         final Message messageNew = message.value.copy(CipherUtil.encrypt(message.value.plainText));
                         long threadDuration = (System.currentTimeMillis() - startTime);
                         final WithMillis<Message> messageNewWithMillis = new WithMillis<>(messageNew, threadDuration);
                         mHandler.sendMessage(mHandler.obtainMessage(CIPHER_ELEMENT_DONE_MESSAGE, messageNewWithMillis));
+                        mQueueEndPointer++;
                     }
                     mHandler.sendEmptyMessage(CIPHER_QUEUE_DONE_MESSAGE);
                 }
