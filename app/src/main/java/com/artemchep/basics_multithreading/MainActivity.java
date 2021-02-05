@@ -2,10 +2,7 @@ package com.artemchep.basics_multithreading;
 
 import android.os.Bundle;
 import android.os.Handler;
-import android.os.HandlerThread;
-import android.os.Looper;
 import android.view.View;
-import android.widget.Switch;
 
 import androidx.annotation.UiThread;
 import androidx.appcompat.app.AlertDialog;
@@ -18,20 +15,26 @@ import com.artemchep.basics_multithreading.domain.Message;
 import com.artemchep.basics_multithreading.domain.WithMillis;
 
 import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 
 public class MainActivity extends AppCompatActivity {
 
-    private static final int CIPHER_DONE_MESSAGE = 1;
+    private static final int CIPHER_ELEMENT_DONE_MESSAGE = 1;
+    private static final int CIPHER_QUEUE_START_MESSAGE = 2;
+    private static final int CIPHER_QUEUE_DONE_MESSAGE = 3;
 
     private List<WithMillis<Message>> mList = new ArrayList<>();
 
+    private Queue<WithMillis<Message>> mCipherQueue = new LinkedList<>();
+    private Queue<Long> mAddTimeQueue = new LinkedList<>();
+
     private MessageAdapter mAdapter = new MessageAdapter(mList);
 
-    private Handler mBackgroundHandler;
-    private HandlerThread mBackgroundThread;
-
     private Handler mHandler;
+
+    private boolean canEncrypt = true;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -48,18 +51,22 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public boolean handleMessage(android.os.Message msg) {
                 switch (msg.what) {
-                    case CIPHER_DONE_MESSAGE: {
+                    case CIPHER_QUEUE_START_MESSAGE: {
+                        canEncrypt = false;
+                        return true;
+                    }
+                    case CIPHER_ELEMENT_DONE_MESSAGE: {
                         update((WithMillis<Message>) msg.obj);
+                        return true;
+                    }
+                    case CIPHER_QUEUE_DONE_MESSAGE: {
+                        canEncrypt = true;
                         return true;
                     }
                 }
                 return false;
             }
         });
-
-        mBackgroundThread = new HandlerThread("BackgroundThread");
-        mBackgroundThread.start();
-        mBackgroundHandler = new Handler(mBackgroundThread.getLooper());
     }
 
     private void showWelcomeDialog() {
@@ -80,22 +87,28 @@ public class MainActivity extends AppCompatActivity {
     @UiThread
     public void insert(final WithMillis<Message> message) {
         mList.add(message);
+        mAddTimeQueue.add(System.currentTimeMillis());
+        mCipherQueue.add(message);
         mAdapter.notifyItemInserted(mList.size() - 1);
 
         // TODO: Start processing the message (please use CipherUtil#encrypt(...)) here.
         //       After it has been processed, send it to the #update(...) method.
-        final long startTime = System.currentTimeMillis();
-
-        mBackgroundHandler.post(new Runnable() {
-            @Override
-            public void run() {
-                final Message messageNew = message.value.copy(CipherUtil.encrypt(message.value.plainText));
-                long threadDuration = (System.currentTimeMillis() - startTime);
-                final WithMillis<Message> messageNewWithMillis = new WithMillis<>(messageNew, threadDuration);
-                mHandler.sendMessage(mHandler.obtainMessage(CIPHER_DONE_MESSAGE, messageNewWithMillis));
-            }
-        });
-
+        if (canEncrypt) {
+            mHandler.sendEmptyMessage(CIPHER_QUEUE_START_MESSAGE);
+            new Thread(new Runnable() {
+                public void run() {
+                    while (!mCipherQueue.isEmpty()) {
+                        WithMillis<Message> message = mCipherQueue.poll();
+                        Long startTime = mAddTimeQueue.poll();
+                        final Message messageNew = message.value.copy(CipherUtil.encrypt(message.value.plainText));
+                        long threadDuration = (System.currentTimeMillis() - startTime);
+                        final WithMillis<Message> messageNewWithMillis = new WithMillis<>(messageNew, threadDuration);
+                        mHandler.sendMessage(mHandler.obtainMessage(CIPHER_ELEMENT_DONE_MESSAGE, messageNewWithMillis));
+                    }
+                    mHandler.sendEmptyMessage(CIPHER_QUEUE_DONE_MESSAGE);
+                }
+            }).start();
+        }
         // How it should look for the end user? Uncomment if you want to see. Please note that
         // you should not use poor decor view to send messages to UI thread.
 //        getWindow().getDecorView().postDelayed(new Runnable() {
@@ -117,13 +130,6 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
         }
-
         throw new IllegalStateException();
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        mBackgroundThread.quit();
     }
 }
